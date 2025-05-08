@@ -6,7 +6,10 @@ import (
 )
 
 const (
-	BaseURL = "https://deshimula.com"
+	BaseURL     = "https://deshimula.com"
+	Interval    = 1 * time.Minute
+	StorageDir  = "storage"
+	StorageFile = "sent_stories.json"
 )
 
 type HTTPConfig struct {

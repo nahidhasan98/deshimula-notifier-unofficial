@@ -2,6 +2,7 @@ package mula
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -29,19 +30,20 @@ type Mula struct {
 	mu         sync.Mutex
 }
 
-func New(httpConfig *config.HTTPConfig) (*Mula, error) {
-	if os.Getenv("WEBHOOK_ID") == "" || os.Getenv("WEBHOOK_TOKEN") == "" {
+func New() (*Mula, error) {
+	if os.Getenv("WEBHOOK_ID") == "" || os.Getenv("WEBHOOK_TOKEN") == "" ||
+		os.Getenv("WEBHOOK_ID_ERROR") == "" || os.Getenv("WEBHOOK_TOKEN_ERROR") == "" {
 		return nil, errorhandling.NewError(errorhandling.ConfigError, "Missing webhook configuration", nil)
 	}
 
-	storageDir := filepath.Join("storage", "sent_stories.json")
+	storageDir := filepath.Join(config.StorageDir, config.StorageFile)
 	storyStorage, err := storage.NewStoryStorage(storageDir)
 	if err != nil {
 		return nil, errorhandling.NewError(errorhandling.ConfigError, "Failed to initialize storage", err)
 	}
 
 	return &Mula{
-		httpConfig: httpConfig,
+		httpConfig: config.NewHTTPConfig(),
 		storage:    storyStorage,
 	}, nil
 }
@@ -94,8 +96,8 @@ func (m *Mula) fetchStoryLinks() ([]string, error) {
 }
 
 func (m *Mula) processStory(link string) error {
-
 	if m.storage.HasStory(link) {
+		log.Println("Found no new story, skipping:", link)
 		return nil
 	}
 
@@ -161,12 +163,22 @@ func (m *Mula) fetchAndParseStory(link string) (*Story, error) {
 }
 
 func (m *Mula) sendToDiscord(story *Story) error {
-	webhookID := os.Getenv("WEBHOOK_ID")
-	webhookToken := os.Getenv("WEBHOOK_TOKEN")
+	var webhookID, webhookToken string
 
+	if os.Getenv("MODE") == "DEVELOPMENT" {
+		webhookID = os.Getenv("WEBHOOK_ID_ERROR")
+		webhookToken = os.Getenv("WEBHOOK_TOKEN_ERROR")
+	} else {
+		webhookID = os.Getenv("WEBHOOK_ID")
+		webhookToken = os.Getenv("WEBHOOK_TOKEN")
+	}
+	fmt.Println(webhookID, webhookToken, os.Getenv("MODE"))
 	webhook := discordtexthook.NewDiscordTextHookService(webhookID, webhookToken)
 
 	var message strings.Builder
+	if os.Getenv("MODE") == "DEVELOPMENT" {
+		message.WriteString("[DEV] ")
+	}
 	message.WriteString(fmt.Sprintf("**%s**\n", story.Title))
 	message.WriteString(fmt.Sprintf("Company: %s\n", story.Company))
 	message.WriteString(fmt.Sprintf("Tag: %s\n", story.Tag))
