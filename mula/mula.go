@@ -29,6 +29,7 @@ type Mula struct {
 	httpConfig *config.HTTPConfig
 	storage    *storage.StoryStorage
 	mu         sync.Mutex
+	discordMu  sync.Mutex // Add mutex for Discord message synchronization
 }
 
 func New() (*Mula, error) {
@@ -190,6 +191,9 @@ func (m *Mula) fetchAndParseStory(link string) (*Story, error) {
 }
 
 func (m *Mula) sendToDiscord(story *Story) error {
+	m.discordMu.Lock()
+	defer m.discordMu.Unlock()
+
 	var webhookID, webhookToken string
 
 	if os.Getenv("MODE") == "DEVELOPMENT" {
@@ -206,7 +210,7 @@ func (m *Mula) sendToDiscord(story *Story) error {
 	if os.Getenv("MODE") == "DEVELOPMENT" {
 		header.WriteString("[DEV]\n")
 	}
-	header.WriteString(fmt.Sprintf("**%s**\n", story.Title))
+	header.WriteString(fmt.Sprintf("📢 **%s**\n", story.Title))
 	header.WriteString(fmt.Sprintf("Author: %s\n", story.Author))
 	header.WriteString(fmt.Sprintf("Company: %s\n", story.Company))
 	header.WriteString(fmt.Sprintf("Tag: %s\n", story.Tag))
