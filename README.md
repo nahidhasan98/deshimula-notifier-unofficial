@@ -2,6 +2,8 @@
 
 An unofficial Discord notifier for [Deshimula](https://deshimula.com) that monitors and sends story updates to Discord channel.
 
+📢 **[Join our Discord Channel](https://discord.gg/7R58CMmksV)** to receive Mula updates!
+
 ## Features
 
 - 🔄 Automatically fetches new stories from Deshimula
