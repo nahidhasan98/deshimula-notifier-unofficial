@@ -49,26 +49,26 @@ func New() (*Mula, error) {
 }
 
 func (m *Mula) FetchAndProcessStories() error {
-	links, err := m.fetchStoryLinks()
+	link, err := m.fetchStoryLinks()
 	if err != nil {
 		return err
 	}
 
 	var wg sync.WaitGroup
-	for _, link := range links {
-		wg.Add(1)
-		go func(storyLink string) {
-			defer wg.Done()
-			if err := m.processStory(storyLink); err != nil {
-				errorhandling.HandleError(err)
-			}
-		}(link)
-	}
+	wg.Add(1)
+
+	go func(storyLink string) {
+		defer wg.Done()
+		if err := m.processStory(storyLink); err != nil {
+			errorhandling.HandleError(err)
+		}
+	}(*link)
+
 	wg.Wait()
 	return nil
 }
 
-func (m *Mula) fetchStoryLinks() ([]string, error) {
+func (m *Mula) fetchStoryLinks() (*string, error) {
 	resp, err := m.httpConfig.Client.Get(config.BaseURL + "/stories/1")
 	if err != nil {
 		return nil, errorhandling.NewError(errorhandling.NetworkError, "Failed to fetch stories", err)
@@ -80,19 +80,19 @@ func (m *Mula) fetchStoryLinks() ([]string, error) {
 		return nil, err
 	}
 
-	var links []string
-	doc.Find(".mula-list").Each(func(i int, s *goquery.Selection) {
-		if i != 1 {
-			return
-		}
-		if link, exists := s.Find("a").Attr("href"); exists {
-			if link[0] == '/' {
-				link = config.BaseURL + link
+	var link *string
+	doc.Find(".mula-list").EachWithBreak(func(i int, s *goquery.Selection) bool {
+		if l, exists := s.Find("a").Attr("href"); exists {
+			if l[0] == '/' {
+				l = config.BaseURL + l
+				link = &l
+				return false
 			}
-			links = append(links, link)
 		}
+		return true
 	})
-	return links, nil
+
+	return link, nil
 }
 
 func (m *Mula) processStory(link string) error {
@@ -172,22 +172,46 @@ func (m *Mula) sendToDiscord(story *Story) error {
 		webhookID = os.Getenv("WEBHOOK_ID")
 		webhookToken = os.Getenv("WEBHOOK_TOKEN")
 	}
-	fmt.Println(webhookID, webhookToken, os.Getenv("MODE"))
+
 	webhook := discordtexthook.NewDiscordTextHookService(webhookID, webhookToken)
 
-	var message strings.Builder
+	// Build header message
+	var header strings.Builder
 	if os.Getenv("MODE") == "DEVELOPMENT" {
-		message.WriteString("[DEV] ")
+		header.WriteString("[DEV] ")
 	}
-	message.WriteString(fmt.Sprintf("**%s**\n", story.Title))
-	message.WriteString(fmt.Sprintf("Company: %s\n", story.Company))
-	message.WriteString(fmt.Sprintf("Tag: %s\n", story.Tag))
-	message.WriteString(fmt.Sprintf("Link: %s\n\n", story.Link))
-	message.WriteString(fmt.Sprintf("Description:\n%s", story.Description))
+	header.WriteString(fmt.Sprintf("**%s**\n", story.Title))
+	header.WriteString(fmt.Sprintf("Company: %s\n", story.Company))
+	header.WriteString(fmt.Sprintf("Tag: %s\n", story.Tag))
+	header.WriteString(fmt.Sprintf("Link: %s\n\n", story.Link))
 
-	_, err := webhook.SendMessage(message.String())
-	if err != nil {
-		return errorhandling.NewError(errorhandling.DiscordError, "Failed to send to Discord", err)
+	// Send header first
+	if _, err := webhook.SendMessage(header.String()); err != nil {
+		return errorhandling.NewError(errorhandling.DiscordError, "Failed to send header to Discord", err)
 	}
+
+	// Split description into chunks if needed
+	const maxChunkSize = 1900 // Leave some room for formatting
+	description := "Description:\n" + story.Description
+
+	for len(description) > 0 {
+		chunk := description
+		if len(description) > maxChunkSize {
+			// Find last newline before maxChunkSize
+			lastNewline := strings.LastIndex(description[:maxChunkSize], "\n")
+			if lastNewline == -1 {
+				lastNewline = maxChunkSize
+			}
+			chunk = description[:lastNewline]
+			description = description[lastNewline:]
+		} else {
+			description = ""
+		}
+
+		if _, err := webhook.SendMessage(chunk); err != nil {
+			return errorhandling.NewError(errorhandling.DiscordError, "Failed to send description chunk to Discord", err)
+		}
+	}
+
 	return nil
 }
