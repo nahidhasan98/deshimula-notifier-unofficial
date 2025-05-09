@@ -19,14 +19,6 @@ An unofficial Discord notifier for [Deshimula](https://deshimula.com) that monit
 - `mula/` - Core functionality for fetching and processing stories
 - `storage/` - Story storage management to prevent duplicates
 
-## Error Handling
-
-The application includes comprehensive error handling for:
-- Network issues
-- Configuration problems
-- Discord webhook failures
-- Storage operations
-
 ## License
 
 This is an unofficial tool and is not affiliated with [Deshimula](https://deshimula.com).
