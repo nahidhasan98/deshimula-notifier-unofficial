@@ -22,6 +22,7 @@ type Story struct {
 	Tag         string
 	Description string
 	Link        string
+	Author      string
 }
 
 type Mula struct {
@@ -48,27 +49,52 @@ func New() (*Mula, error) {
 	}, nil
 }
 
+var isFirstRun = true
+
 func (m *Mula) FetchAndProcessStories() error {
-	link, err := m.fetchStoryLinks()
+	links, err := m.fetchStoryLinks()
 	if err != nil {
 		return err
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(1)
 
-	go func(storyLink string) {
-		defer wg.Done()
-		if err := m.processStory(storyLink); err != nil {
-			errorhandling.HandleError(err)
+	if isFirstRun {
+		if len(links) > 0 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := m.processStory(links[0]); err != nil {
+					errorhandling.HandleError(err)
+				}
+			}()
+
+			for _, link := range links[1:] {
+				if !m.storage.HasStory(link) {
+					if err := m.storage.AddStory(link); err != nil {
+						errorhandling.HandleError(err)
+					}
+				}
+			}
 		}
-	}(*link)
+		isFirstRun = false
+	} else {
+		wg.Add(len(links))
+		for _, link := range links {
+			go func(storyLink string) {
+				defer wg.Done()
+				if err := m.processStory(storyLink); err != nil {
+					errorhandling.HandleError(err)
+				}
+			}(link)
+		}
+	}
 
 	wg.Wait()
 	return nil
 }
 
-func (m *Mula) fetchStoryLinks() (*string, error) {
+func (m *Mula) fetchStoryLinks() ([]string, error) {
 	resp, err := m.httpConfig.Client.Get(config.BaseURL + "/stories/1")
 	if err != nil {
 		return nil, errorhandling.NewError(errorhandling.NetworkError, "Failed to fetch stories", err)
@@ -80,19 +106,17 @@ func (m *Mula) fetchStoryLinks() (*string, error) {
 		return nil, err
 	}
 
-	var link *string
-	doc.Find(".mula-list").EachWithBreak(func(i int, s *goquery.Selection) bool {
-		if l, exists := s.Find("a").Attr("href"); exists {
-			if l[0] == '/' {
-				l = config.BaseURL + l
-				link = &l
-				return false
+	var links []string
+	doc.Find(".mula-list").Each(func(i int, s *goquery.Selection) {
+		if link, exists := s.Find("a").Attr("href"); exists {
+			if link[0] == '/' {
+				link = config.BaseURL + link
+				links = append(links, link)
 			}
 		}
-		return true
 	})
 
-	return link, nil
+	return links, nil
 }
 
 func (m *Mula) processStory(link string) error {
@@ -138,6 +162,9 @@ func (m *Mula) fetchAndParseStory(link string) (*Story, error) {
 
 	story.Title = strings.TrimSpace(doc.Find("h3").First().Text())
 
+	authorText := doc.Find("h6.fw-semibold").Text()
+	story.Author = strings.TrimSpace(strings.TrimPrefix(authorText, "by "))
+
 	doc.Find(".badge").Each(func(i int, s *goquery.Selection) {
 		text := strings.TrimSpace(s.Text())
 		if i == 0 {
@@ -175,29 +202,26 @@ func (m *Mula) sendToDiscord(story *Story) error {
 
 	webhook := discordtexthook.NewDiscordTextHookService(webhookID, webhookToken)
 
-	// Build header message
 	var header strings.Builder
 	if os.Getenv("MODE") == "DEVELOPMENT" {
-		header.WriteString("[DEV] ")
+		header.WriteString("[DEV]\n")
 	}
 	header.WriteString(fmt.Sprintf("**%s**\n", story.Title))
+	header.WriteString(fmt.Sprintf("Author: %s\n", story.Author))
 	header.WriteString(fmt.Sprintf("Company: %s\n", story.Company))
 	header.WriteString(fmt.Sprintf("Tag: %s\n", story.Tag))
 	header.WriteString(fmt.Sprintf("Link: %s\n\n", story.Link))
 
-	// Send header first
 	if _, err := webhook.SendMessage(header.String()); err != nil {
 		return errorhandling.NewError(errorhandling.DiscordError, "Failed to send header to Discord", err)
 	}
 
-	// Split description into chunks if needed
-	const maxChunkSize = 1900 // Leave some room for formatting
+	const maxChunkSize = 1900
 	description := "Description:\n" + story.Description
 
 	for len(description) > 0 {
 		chunk := description
 		if len(description) > maxChunkSize {
-			// Find last newline before maxChunkSize
 			lastNewline := strings.LastIndex(description[:maxChunkSize], "\n")
 			if lastNewline == -1 {
 				lastNewline = maxChunkSize
