@@ -1,3 +1,4 @@
 .env
 
-storage/sent_stories.json
+storage/mula_sent_stories.json
+storage/oak_sent_stories.json

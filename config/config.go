@@ -6,10 +6,13 @@ import (
 )
 
 const (
-	BaseURL     = "https://deshimula.com"
-	Interval    = 1 * time.Minute
-	StorageDir  = "storage"
-	StorageFile = "sent_stories.json"
+	MulaURL         = "https://deshimula.com"
+	OakURL          = "https://oakthu.com"
+	OakStoriesURL   = "https://cktyiwbcjvgfbfmjcwao.supabase.co/rest/v1/stories?select=*&order=created_at.desc&limit=20"
+	Interval        = 20 * time.Second
+	StorageDir      = "storage"
+	MulaStorageFile = "mula_sent_stories.json"
+	OakStorageFile  = "oak_sent_stories.json"
 )
 
 type HTTPConfig struct {

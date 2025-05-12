@@ -12,6 +12,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/nahidhasan98/deshimula-notifier-unofficial/config"
 	"github.com/nahidhasan98/deshimula-notifier-unofficial/errorhandling"
+	"github.com/nahidhasan98/deshimula-notifier-unofficial/interfacer"
 	"github.com/nahidhasan98/deshimula-notifier-unofficial/storage"
 	discordtexthook "github.com/nahidhasan98/discord-text-hook"
 )
@@ -32,13 +33,13 @@ type Mula struct {
 	discordMu  sync.Mutex // Add mutex for Discord message synchronization
 }
 
-func New() (*Mula, error) {
-	if os.Getenv("WEBHOOK_ID") == "" || os.Getenv("WEBHOOK_TOKEN") == "" ||
+func New() (interfacer.Service, error) {
+	if os.Getenv("WEBHOOK_ID_MULA") == "" || os.Getenv("WEBHOOK_TOKEN_MULA") == "" ||
 		os.Getenv("WEBHOOK_ID_ERROR") == "" || os.Getenv("WEBHOOK_TOKEN_ERROR") == "" {
 		return nil, errorhandling.NewError(errorhandling.ConfigError, "Missing webhook configuration", nil)
 	}
 
-	storageDir := filepath.Join(config.StorageDir, config.StorageFile)
+	storageDir := filepath.Join(config.StorageDir, config.MulaStorageFile)
 	storyStorage, err := storage.NewStoryStorage(storageDir)
 	if err != nil {
 		return nil, errorhandling.NewError(errorhandling.ConfigError, "Failed to initialize storage", err)
@@ -71,8 +72,8 @@ func (m *Mula) FetchAndProcessStories() error {
 			}()
 
 			for _, link := range links[1:] {
-				if !m.storage.HasStory(link) {
-					if err := m.storage.AddStory(link); err != nil {
+				if !m.storage.HasStory(strings.TrimPrefix(link, "https://deshimula.com/story/")) {
+					if err := m.storage.AddStory(strings.TrimPrefix(link, "https://deshimula.com/story/")); err != nil {
 						errorhandling.HandleError(err)
 					}
 				}
@@ -96,9 +97,17 @@ func (m *Mula) FetchAndProcessStories() error {
 }
 
 func (m *Mula) fetchStoryLinks() ([]string, error) {
-	resp, err := m.httpConfig.Client.Get(config.BaseURL + "/stories/1")
+	req, err := http.NewRequest("GET", config.MulaURL, nil)
 	if err != nil {
-		return nil, errorhandling.NewError(errorhandling.NetworkError, "Failed to fetch stories", err)
+		return nil, errorhandling.NewError(errorhandling.NetworkError, "Failed to create request", err)
+	}
+
+	for key, value := range m.httpConfig.Headers {
+		req.Header.Set(key, value)
+	}
+	resp, err := m.httpConfig.Client.Do(req)
+	if err != nil {
+		return nil, errorhandling.NewError(errorhandling.NetworkError, "Failed to fetch story links", err)
 	}
 	defer resp.Body.Close()
 
@@ -111,7 +120,7 @@ func (m *Mula) fetchStoryLinks() ([]string, error) {
 	doc.Find(".mula-list").Each(func(i int, s *goquery.Selection) {
 		if link, exists := s.Find("a").Attr("href"); exists {
 			if link[0] == '/' {
-				link = config.BaseURL + link
+				link = config.MulaURL + link
 				links = append(links, link)
 			}
 		}
@@ -121,8 +130,8 @@ func (m *Mula) fetchStoryLinks() ([]string, error) {
 }
 
 func (m *Mula) processStory(link string) error {
-	if m.storage.HasStory(link) {
-		log.Println("Found no new story, skipping:", link)
+	if m.storage.HasStory(strings.TrimPrefix(link, "https://deshimula.com/story/")) {
+		log.Println("Found no new story, skipping:", strings.TrimPrefix(link, "https://deshimula.com/story/"))
 		return nil
 	}
 
@@ -135,14 +144,23 @@ func (m *Mula) processStory(link string) error {
 		return err
 	}
 
-	if err := m.storage.AddStory(link); err != nil {
+	if err := m.storage.AddStory(strings.TrimPrefix(link, "https://deshimula.com/story/")); err != nil {
 		return errorhandling.NewError(errorhandling.StorageError, "Failed to mark story as sent", err)
 	}
 	return nil
 }
 
 func (m *Mula) fetchAndParseStory(link string) (*Story, error) {
-	resp, err := m.httpConfig.Client.Get(link)
+	req, err := http.NewRequest("GET", link, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	for key, value := range m.httpConfig.Headers {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := m.httpConfig.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -195,40 +213,40 @@ func (m *Mula) sendToDiscord(story *Story) error {
 	defer m.discordMu.Unlock()
 
 	var webhookID, webhookToken string
-
 	if os.Getenv("MODE") == "DEVELOPMENT" {
 		webhookID = os.Getenv("WEBHOOK_ID_ERROR")
 		webhookToken = os.Getenv("WEBHOOK_TOKEN_ERROR")
 	} else {
-		webhookID = os.Getenv("WEBHOOK_ID")
-		webhookToken = os.Getenv("WEBHOOK_TOKEN")
+		webhookID = os.Getenv("WEBHOOK_ID_MULA")
+		webhookToken = os.Getenv("WEBHOOK_TOKEN_MULA")
 	}
 
 	webhook := discordtexthook.NewDiscordTextHookService(webhookID, webhookToken)
 
-	var header strings.Builder
-	if os.Getenv("MODE") == "DEVELOPMENT" {
-		header.WriteString("[DEV]\n")
-	}
-	header.WriteString(fmt.Sprintf("📢 **%s**\n", story.Title))
-	header.WriteString(fmt.Sprintf("Author: %s\n", story.Author))
-	header.WriteString(fmt.Sprintf("Company: %s\n", story.Company))
-	header.WriteString(fmt.Sprintf("Tag: %s\n", story.Tag))
-	header.WriteString(fmt.Sprintf("Link: %s\n\n", story.Link))
-
-	if _, err := webhook.SendMessage(header.String()); err != nil {
-		return errorhandling.NewError(errorhandling.DiscordError, "Failed to send header to Discord", err)
+	embed := discordtexthook.Embed{
+		Title: truncateString(story.Title, 256),
+		Description: fmt.Sprintf("**Author:** %s\n**Company:** %s\n**Tag:** %s\n**Link:** %s",
+			truncateString(story.Author, 1024),
+			truncateString(story.Company, 1024),
+			truncateString(story.Tag, 1024),
+			story.Link),
+		Color: 0xFFDFBA,
 	}
 
-	const maxChunkSize = 1900
-	description := "Description:\n" + story.Description
+	if _, err := webhook.SendEmbed(embed); err != nil {
+		return errorhandling.NewError(errorhandling.DiscordError, "Failed to send main embed to Discord", err)
+	}
+
+	const maxContentLength = 4000
+	description := story.Description
+	chunkNumber := 1
 
 	for len(description) > 0 {
 		chunk := description
-		if len(description) > maxChunkSize {
-			lastNewline := strings.LastIndex(description[:maxChunkSize], "\n")
+		if len(description) > maxContentLength {
+			lastNewline := strings.LastIndex(description[:maxContentLength], "\n")
 			if lastNewline == -1 {
-				lastNewline = maxChunkSize
+				lastNewline = maxContentLength
 			}
 			chunk = description[:lastNewline]
 			description = description[lastNewline:]
@@ -236,10 +254,25 @@ func (m *Mula) sendToDiscord(story *Story) error {
 			description = ""
 		}
 
-		if _, err := webhook.SendMessage(chunk); err != nil {
+		contentEmbed := discordtexthook.Embed{
+			Title:       fmt.Sprintf("Review/Description (Part %d)", chunkNumber),
+			Description: chunk,
+			Color:       0xFFDFBA,
+		}
+
+		if _, err := webhook.SendEmbed(contentEmbed); err != nil {
 			return errorhandling.NewError(errorhandling.DiscordError, "Failed to send description chunk to Discord", err)
 		}
+
+		chunkNumber++
 	}
 
 	return nil
+}
+
+func truncateString(s string, maxLength int) string {
+	if len(s) <= maxLength {
+		return s
+	}
+	return s[:maxLength-3] + "..."
 }
