@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"sync"
+	"time"
 
 	discordtexthook "github.com/nahidhasan98/discord-text-hook"
 )
@@ -72,6 +74,51 @@ func sendToDiscord(msg string) error {
 	return err
 }
 
+type ErrorTracker struct {
+	errors   map[string]time.Time
+	mu       sync.RWMutex
+	cooldown time.Duration
+}
+
+var (
+	tracker = &ErrorTracker{
+		errors:   make(map[string]time.Time),
+		cooldown: time.Hour,
+	}
+)
+
+func (t *ErrorTracker) shouldSendError(err error) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	errKey := err.Error()
+	lastSent, exists := t.errors[errKey]
+
+	if !exists {
+		t.errors[errKey] = time.Now()
+		return true
+	}
+
+	if time.Since(lastSent) > t.cooldown {
+		t.errors[errKey] = time.Now()
+		return true
+	}
+
+	return false
+}
+
+func (t *ErrorTracker) cleanup() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	now := time.Now()
+	for errKey, lastSent := range t.errors {
+		if now.Sub(lastSent) > t.cooldown {
+			delete(t.errors, errKey)
+		}
+	}
+}
+
 func HandleError(err error) {
 	if err == nil {
 		return
@@ -79,8 +126,17 @@ func HandleError(err error) {
 
 	log.Printf("ERROR: %v\n", err)
 
+	// Check if we should send this error to Discord
+	if !tracker.shouldSendError(err) {
+		log.Printf("Skipping error notification (cooldown): %v\n", err)
+		return
+	}
+
 	msg := formatErrorMessage(err)
 	if discordErr := sendToDiscord(msg); discordErr != nil {
 		log.Printf("Failed to send error to Discord: %v\n", discordErr)
 	}
+
+	// Cleanup old errors periodically
+	tracker.cleanup()
 }

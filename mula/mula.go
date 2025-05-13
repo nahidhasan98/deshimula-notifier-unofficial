@@ -224,7 +224,7 @@ func (m *Mula) sendToDiscord(story *Story) error {
 	webhook := discordtexthook.NewDiscordTextHookService(webhookID, webhookToken)
 
 	embed := discordtexthook.Embed{
-		Title: truncateString(story.Title, 256),
+		Title: "📢  " + truncateString(story.Title, 256),
 		Description: fmt.Sprintf("**Author:** %s\n**Company:** %s\n**Tag:** %s\n**Link:** %s",
 			truncateString(story.Author, 1024),
 			truncateString(story.Company, 1024),
@@ -254,8 +254,15 @@ func (m *Mula) sendToDiscord(story *Story) error {
 			description = ""
 		}
 
+		var title string
+		if chunkNumber > 1 || len(description) > 0 {
+			title = fmt.Sprintf("Review/Description (Part %d)", chunkNumber)
+		} else {
+			title = "Review/Description"
+		}
+
 		contentEmbed := discordtexthook.Embed{
-			Title:       fmt.Sprintf("Review/Description (Part %d)", chunkNumber),
+			Title:       title,
 			Description: chunk,
 			Color:       0xFFDFBA,
 		}

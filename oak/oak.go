@@ -234,7 +234,7 @@ func (m *Oak) sendToDiscord(story *Story) error {
 	webhook := discordtexthook.NewDiscordTextHookService(webhookID, webhookToken)
 
 	embed := discordtexthook.Embed{
-		Title: truncateString(story.Title, 256),
+		Title: "📢  " + truncateString(story.Title, 256),
 		Description: fmt.Sprintf("**Company:** %s\n**Review Type:** %s\n**Link:** %s",
 			truncateString(story.Company, 1024),
 			truncateString(story.Review, 1024),
@@ -263,8 +263,15 @@ func (m *Oak) sendToDiscord(story *Story) error {
 			content = ""
 		}
 
+		var title string
+		if chunkNumber > 1 || len(content) > 0 {
+			title = fmt.Sprintf("Review/Description (Part %d)", chunkNumber)
+		} else {
+			title = "Review/Description"
+		}
+
 		contentEmbed := discordtexthook.Embed{
-			Title:       fmt.Sprintf("Review/Description (Part %d)", chunkNumber),
+			Title:       title,
 			Description: chunk,
 			Color:       0x0D9488,
 		}
