@@ -1,6 +1,7 @@
 package oak
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -192,6 +193,10 @@ func (m *Oak) fetchAndParseStory(link string) (*Story, error) {
 			story.Tag = text
 		}
 	})
+
+	if len(story.Company) == 0 {
+		return nil, errors.New("Empty company name")
+	}
 
 	var description strings.Builder
 	doc.Find("article").Find("p, ol li").Each(func(i int, s *goquery.Selection) {
