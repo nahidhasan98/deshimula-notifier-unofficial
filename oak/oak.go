@@ -1,9 +1,7 @@
 package oak
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -11,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	md "github.com/JohannesKaufmann/html-to-markdown"
 	"github.com/PuerkitoBio/goquery"
 	"github.com/nahidhasan98/deshimula-notifier-unofficial/config"
 	"github.com/nahidhasan98/deshimula-notifier-unofficial/errorhandling"
@@ -21,20 +18,12 @@ import (
 )
 
 type Story struct {
-	ID        string `json:"id"`
-	Link      string `json:"link"`
-	Title     string `json:"title"`
-	Content   string `json:"content"`
-	Company   string `json:"company_name"`
-	Review    string `json:"review_type"`
-	Status    string `json:"status"`
-	VotesUp   int    `json:"votes_up"`
-	VotesDown int    `json:"votes_down"`
-	BrowserID string `json:"browser_id"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-	IP        string `json:"ip"`
-	Browser   string `json:"browser"`
+	Title       string
+	Company     string
+	Tag         string
+	Description string
+	Link        string
+	Author      string
 }
 
 type Oak struct {
@@ -65,12 +54,7 @@ func New() (interfacer.Service, error) {
 var isFirstRun = true
 
 func (m *Oak) FetchAndProcessStories() error {
-	token, err := m.fetchToken()
-	if err != nil {
-		return err
-	}
-
-	stories, err := m.fetchStories(token)
+	links, err := m.fetchStoryLinks()
 	if err != nil {
 		return err
 	}
@@ -78,18 +62,18 @@ func (m *Oak) FetchAndProcessStories() error {
 	var wg sync.WaitGroup
 
 	if isFirstRun {
-		if len(stories) > 0 {
+		if len(links) > 0 {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				if err := m.processStory(&stories[0]); err != nil {
+				if err := m.processStory(links[0]); err != nil {
 					errorhandling.HandleError(err)
 				}
 			}()
 
-			for _, story := range stories[1:] {
-				if !m.storage.HasStory(story.ID) {
-					if err := m.storage.AddStory(story.ID); err != nil {
+			for _, link := range links[1:] {
+				if !m.storage.HasStory(strings.TrimPrefix(link, "https://oakthu.com/story/")) {
+					if err := m.storage.AddStory(strings.TrimPrefix(link, "https://oakthu.com/story/")); err != nil {
 						errorhandling.HandleError(err)
 					}
 				}
@@ -97,14 +81,14 @@ func (m *Oak) FetchAndProcessStories() error {
 		}
 		isFirstRun = false
 	} else {
-		wg.Add(len(stories))
-		for _, story := range stories {
-			go func(story Story) {
+		wg.Add(len(links))
+		for _, link := range links {
+			go func(storyLink string) {
 				defer wg.Done()
-				if err := m.processStory(&story); err != nil {
+				if err := m.processStory(storyLink); err != nil {
 					errorhandling.HandleError(err)
 				}
-			}(story)
+			}(link)
 		}
 	}
 
@@ -112,48 +96,8 @@ func (m *Oak) FetchAndProcessStories() error {
 	return nil
 }
 
-func (m *Oak) fetchToken() (string, error) {
-	resp, err := m.httpConfig.Client.Get(config.OakURL)
-	if err != nil {
-		return "", errorhandling.NewError(errorhandling.NetworkError, "Failed to fetch token", err)
-	}
-	defer resp.Body.Close()
-
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		return "", errorhandling.NewError(errorhandling.ScrapingError, "Failed to parse token", err)
-	}
-
-	var token string
-
-	doc.Find("script").Each(func(i int, s *goquery.Selection) {
-		src, exists := s.Attr("src")
-		if exists && strings.HasPrefix(src, "/assets/index-") {
-			resp, err := m.httpConfig.Client.Get(config.OakURL + src)
-			if err != nil {
-				return
-			}
-			defer resp.Body.Close()
-
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return
-			}
-			respBody := string(body)
-
-			if strings.Contains(respBody, "QC=\"") {
-				token = strings.Split(respBody, "QC=\"")[1]
-				token = strings.Split(token, "\"")[0]
-				return
-			}
-		}
-	})
-
-	return token, nil
-}
-
-func (m *Oak) fetchStories(token string) ([]Story, error) {
-	req, err := http.NewRequest("GET", config.OakStoriesURL, nil)
+func (m *Oak) fetchStoryLinks() ([]string, error) {
+	req, err := http.NewRequest("GET", config.OakURL, nil)
 	if err != nil {
 		return nil, errorhandling.NewError(errorhandling.NetworkError, "Failed to create request", err)
 	}
@@ -161,61 +105,107 @@ func (m *Oak) fetchStories(token string) ([]Story, error) {
 	for key, value := range m.httpConfig.Headers {
 		req.Header.Set(key, value)
 	}
-
-	req.Header.Set("Apikey", token)
-	req.Header.Set("Authorization", "Bearer "+token)
-
 	resp, err := m.httpConfig.Client.Do(req)
 	if err != nil {
-		return nil, errorhandling.NewError(errorhandling.NetworkError, "Failed to fetch stories", err)
+		return nil, errorhandling.NewError(errorhandling.NetworkError, "Failed to fetch story links", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
-		return nil, errorhandling.NewError(errorhandling.ScrapingError, "Failed to read stories", err)
+		return nil, err
 	}
 
-	var stories []Story
-	if err := json.Unmarshal(body, &stories); err != nil {
-		return nil, errorhandling.NewError(errorhandling.ScrapingError, "Failed to unmarshal stories", err)
-	}
+	var links []string
+	doc.Find("div.w-full a.transition-colors").Each(func(i int, s *goquery.Selection) {
+		if link, exists := s.Attr("href"); exists {
+			if link[0] == '/' {
+				link = config.OakURL + link
+				links = append(links, link)
+			}
+		}
+	})
 
-	return stories, nil
+	return links, nil
 }
 
-func (m *Oak) processStory(story *Story) error {
-	if m.storage.HasStory(story.ID) {
-		log.Println("Found no new story, skipping:", story.ID)
+func (m *Oak) processStory(link string) error {
+	if m.storage.HasStory(strings.TrimPrefix(link, "https://oakthu.com/story/")) {
+		log.Println("Found no new story, skipping:", strings.TrimPrefix(link, "https://oakthu.com/story/"))
 		return nil
 	}
 
-	err := m.parseStory(story)
+	story, err := m.fetchAndParseStory(link)
 	if err != nil {
-		return errorhandling.NewError(errorhandling.ScrapingError, "Failed to parse story", err)
+		return errorhandling.NewError(errorhandling.ScrapingError, "Failed to fetch story", err)
 	}
 
 	if err := m.sendToDiscord(story); err != nil {
 		return err
 	}
 
-	if err := m.storage.AddStory(story.ID); err != nil {
+	if err := m.storage.AddStory(strings.TrimPrefix(link, "https://oakthu.com/story/")); err != nil {
 		return errorhandling.NewError(errorhandling.StorageError, "Failed to mark story as sent", err)
 	}
 	return nil
 }
 
-func (m *Oak) parseStory(story *Story) error {
-	story.Link = fmt.Sprintf("%s/story/%s", config.OakURL, story.ID)
-
-	converter := md.NewConverter("", true, nil)
-	var err error
-	story.Content, err = converter.ConvertString(story.Content)
+func (m *Oak) fetchAndParseStory(link string) (*Story, error) {
+	req, err := http.NewRequest("GET", link, nil)
 	if err != nil {
-		return errorhandling.NewError(errorhandling.ScrapingError, "Failed to convert story content to markdown", err)
+		return nil, err
 	}
 
-	return nil
+	for key, value := range m.httpConfig.Headers {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := m.httpConfig.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	story := &Story{
+		Link: link,
+	}
+
+	story.Title = strings.TrimSpace(doc.Find("article h1").First().Text())
+
+	// authorText := doc.Find("h6.fw-semibold").Text()
+	// story.Author = strings.TrimSpace(strings.TrimPrefix(authorText, "by "))
+
+	doc.Find("article span").Each(func(i int, s *goquery.Selection) {
+		text := strings.TrimSpace(s.Text())
+		if i == 0 {
+			story.Company = text
+		} else if i == 1 {
+			story.Tag = text
+		}
+	})
+
+	var description strings.Builder
+	doc.Find("article").Find("p, ol li").Each(func(i int, s *goquery.Selection) {
+		text := strings.TrimSpace(s.Text())
+		if text != "" {
+			if s.Is("li") {
+				description.WriteString("- ")
+			}
+			description.WriteString(text + "\n")
+		}
+	})
+	story.Description = description.String()
+
+	return story, nil
 }
 
 func (m *Oak) sendToDiscord(story *Story) error {
@@ -235,9 +225,9 @@ func (m *Oak) sendToDiscord(story *Story) error {
 
 	embed := discordtexthook.Embed{
 		Title: "📢  " + truncateString(story.Title, 256),
-		Description: fmt.Sprintf("**Company:** %s\n**Review Type:** %s\n**Link:** %s",
+		Description: fmt.Sprintf("**Company:** %s\n**Tag:** %s\n**Link:** %s",
 			truncateString(story.Company, 1024),
-			truncateString(story.Review, 1024),
+			truncateString(story.Tag, 1024),
 			story.Link),
 		Color: 0x0D9488,
 	}
@@ -247,24 +237,24 @@ func (m *Oak) sendToDiscord(story *Story) error {
 	}
 
 	const maxContentLength = 4000
-	content := story.Content
+	description := story.Description
 	chunkNumber := 1
 
-	for len(content) > 0 {
-		chunk := content
-		if len(content) > maxContentLength {
-			lastNewline := strings.LastIndex(content[:maxContentLength], "\n")
+	for len(description) > 0 {
+		chunk := description
+		if len(description) > maxContentLength {
+			lastNewline := strings.LastIndex(description[:maxContentLength], "\n")
 			if lastNewline == -1 {
 				lastNewline = maxContentLength
 			}
-			chunk = content[:lastNewline]
-			content = content[lastNewline:]
+			chunk = description[:lastNewline]
+			description = description[lastNewline:]
 		} else {
-			content = ""
+			description = ""
 		}
 
 		var title string
-		if chunkNumber > 1 || len(content) > 0 {
+		if chunkNumber > 1 || len(description) > 0 {
 			title = fmt.Sprintf("Review/Description (Part %d)", chunkNumber)
 		} else {
 			title = "Review/Description"
@@ -277,7 +267,7 @@ func (m *Oak) sendToDiscord(story *Story) error {
 		}
 
 		if _, err := webhook.SendEmbed(contentEmbed); err != nil {
-			return errorhandling.NewError(errorhandling.DiscordError, "Failed to send content chunk to Discord", err)
+			return errorhandling.NewError(errorhandling.DiscordError, "Failed to send description chunk to Discord", err)
 		}
 
 		chunkNumber++

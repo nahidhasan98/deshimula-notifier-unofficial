@@ -117,8 +117,8 @@ func (m *Mula) fetchStoryLinks() ([]string, error) {
 	}
 
 	var links []string
-	doc.Find(".mula-list").Each(func(i int, s *goquery.Selection) {
-		if link, exists := s.Find("a").Attr("href"); exists {
+	doc.Find(".read-more").Each(func(i int, s *goquery.Selection) {
+		if link, exists := s.Attr("href"); exists {
 			if link[0] == '/' {
 				link = config.MulaURL + link
 				links = append(links, link)
