@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -180,35 +181,62 @@ func (m *Oak) fetchAndParseStory(link string) (*Story, error) {
 		Link: link,
 	}
 
-	story.Title = strings.TrimSpace(doc.Find("article h1").First().Text())
-
-	// authorText := doc.Find("h6.fw-semibold").Text()
-	// story.Author = strings.TrimSpace(strings.TrimPrefix(authorText, "by "))
-
-	doc.Find("article span").Each(func(i int, s *goquery.Selection) {
-		text := strings.TrimSpace(s.Text())
-		if i == 0 {
-			story.Company = text
-		} else if i == 1 {
-			story.Tag = text
+	// Find the script tag containing the story data
+	var scriptContent string
+	doc.Find("script").Each(func(i int, s *goquery.Selection) {
+		content := s.Text()
+		if strings.Contains(content, "self.__next_f.push") {
+			scriptContent += content[len("self.__next_f.push([1,\"") : len(content)-2]
 		}
 	})
 
-	if len(story.Company) == 0 {
-		return nil, errors.New("Empty company name")
+	if scriptContent == "" {
+		return nil, errors.New("no script content found with company information")
 	}
 
+	scriptContent = strings.ReplaceAll(scriptContent, "\\u003c", "<")
+	scriptContent = strings.ReplaceAll(scriptContent, "\\u003e", ">")
+	scriptContent = strings.ReplaceAll(scriptContent, "\\n", "\n")
+	scriptContent = strings.ReplaceAll(scriptContent, "\\\"", "\"")
+
+	// Extract title
+	if titleMatch := regexp.MustCompile(`"title":"([^"]+)"`).FindStringSubmatch(scriptContent); len(titleMatch) > 1 {
+		story.Title = titleMatch[1]
+	}
+
+	// Extract company name
+	if companyMatch := regexp.MustCompile(`"company_name":"([^"]+)"`).FindStringSubmatch(scriptContent); len(companyMatch) > 1 {
+		story.Company = companyMatch[1]
+	}
+
+	// Extract review type
+	if tagMatch := regexp.MustCompile(`"review_type":"([^"]+)"`).FindStringSubmatch(scriptContent); len(tagMatch) > 1 {
+		story.Tag = tagMatch[1]
+	}
+
+	// Extract content
+	ind1 := strings.Index(scriptContent, "title")
+	ind2 := strings.Index(scriptContent, "company_name")
+	contentDoc, err := goquery.NewDocumentFromReader(strings.NewReader(scriptContent[ind1:ind2]))
+	if err != nil {
+		return nil, err
+	}
 	var description strings.Builder
-	doc.Find("article").Find("p, ol li").Each(func(i int, s *goquery.Selection) {
+	contentDoc.Find("p, ol li").Each(func(i int, s *goquery.Selection) {
 		text := strings.TrimSpace(s.Text())
 		if text != "" {
-			if s.Is("li") {
-				description.WriteString("- ")
-			}
-			description.WriteString(text + "\n")
+			description.WriteString(text + "\n\n")
 		}
 	})
-	story.Description = description.String()
+	story.Description = strings.TrimSpace(description.String())
+
+	if len(story.Company) == 0 {
+		return nil, errors.New("empty company name")
+	}
+
+	if len(story.Description) == 0 {
+		return nil, errors.New("empty description")
+	}
 
 	return story, nil
 }
