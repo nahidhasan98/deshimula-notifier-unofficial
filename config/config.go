@@ -8,7 +8,6 @@ import (
 const (
 	MulaURL         = "https://deshimula.com"
 	OakURL          = "https://oakthu.com"
-	OakStoriesURL   = "https://cktyiwbcjvgfbfmjcwao.supabase.co/rest/v1/stories?select=*&order=created_at.desc&limit=20"
 	Interval        = 1 * time.Minute
 	StorageDir      = "storage"
 	MulaStorageFile = "mula_sent_stories.json"
