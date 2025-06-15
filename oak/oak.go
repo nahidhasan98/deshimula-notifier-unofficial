@@ -3,6 +3,7 @@ package oak
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -88,9 +89,16 @@ func (m *Oak) fetchStoryLinks() ([]string, error) {
 	}
 	defer resp.Body.Close()
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	// Read the body content
+	bodyContent, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, errorhandling.NewError(errorhandling.NetworkError, "Failed to read response body", err)
+	}
+
+	// Create a new reader from the body content for goquery
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(bodyContent)))
+	if err != nil {
+		return nil, errorhandling.NewError(errorhandling.ParseError, "Failed to parse HTML", err)
 	}
 
 	var links []string
@@ -227,4 +235,11 @@ func (m *Oak) fetchAndParseStory(link string) (*base.Story, error) {
 	}
 
 	return story, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

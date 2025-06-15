@@ -9,6 +9,8 @@ require (
 )
 
 require (
+	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
+	github.com/klauspost/compress v1.18.0 // indirect
 	golang.org/x/net v0.39.0 // indirect
 )

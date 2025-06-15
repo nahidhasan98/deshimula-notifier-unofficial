@@ -20,6 +20,7 @@ const (
 	DiscordError
 	StorageError
 	ValidationError
+	ParseError
 )
 
 type AppError struct {
