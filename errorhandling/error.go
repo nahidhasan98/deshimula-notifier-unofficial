@@ -19,6 +19,7 @@ const (
 	ScrapingError
 	DiscordError
 	StorageError
+	ValidationError
 )
 
 type AppError struct {

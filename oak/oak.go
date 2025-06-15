@@ -16,6 +16,26 @@ import (
 	"github.com/nahidhasan98/deshimula-notifier-unofficial/interfacer"
 )
 
+// cleanScriptContent removes escape sequences from the script content
+func cleanScriptContent(content string) string {
+	replacements := map[string]string{
+		"\\u003c":      "<",  // Unicode for <
+		"\\u003e":      ">",  // Unicode for >
+		"\\n":          "\n", // Newline
+		"\\\\\\\"":     "\"", // Escaped quote (\\\")
+		"\\\"":         "\"", // Escaped quote (\")
+		"\\u0026lt;":   "<",  // HTML < escaped as \u0026lt;
+		"\\u0026gt;":   ">",  // HTML > escaped as \u0026gt;
+		"\\u0026quot;": "\"", // HTML " escaped as \u0026quot;
+		"\\u0026#x2F;": "/",  // HTML / escaped as \u0026#x2F;
+	}
+
+	for old, new := range replacements {
+		content = strings.ReplaceAll(content, old, new)
+	}
+	return content
+}
+
 type Oak struct {
 	*base.BaseService
 }
@@ -74,14 +94,30 @@ func (m *Oak) fetchStoryLinks() ([]string, error) {
 	}
 
 	var links []string
-	doc.Find("div.w-full a.transition-colors").Each(func(i int, s *goquery.Selection) {
-		if link, exists := s.Attr("href"); exists {
-			if link[0] == '/' {
-				link = m.BaseURL + link
-				links = append(links, link)
-			}
+	var scriptContent string
+	doc.Find("script").Each(func(i int, s *goquery.Selection) {
+		content := s.Text()
+		if strings.Contains(content, "self.__next_f.push") {
+			scriptContent += content[len("self.__next_f.push([1,\"") : len(content)-2]
 		}
 	})
+
+	if scriptContent == "" {
+		return nil, errors.New("no script content found with company information")
+	}
+
+	scriptContent = cleanScriptContent(scriptContent)
+
+	// Extract story IDs using regex
+	idPattern := regexp.MustCompile(`"id":"([^"]+)"`)
+	matches := idPattern.FindAllStringSubmatch(scriptContent, -1)
+
+	for _, match := range matches {
+		if len(match) > 1 {
+			storyLink := m.BaseService.BaseURL + "/story/" + match[1]
+			links = append(links, storyLink)
+		}
+	}
 
 	return links, nil
 }
@@ -149,10 +185,7 @@ func (m *Oak) fetchAndParseStory(link string) (*base.Story, error) {
 		return nil, errors.New("no script content found with company information")
 	}
 
-	scriptContent = strings.ReplaceAll(scriptContent, "\\u003c", "<")
-	scriptContent = strings.ReplaceAll(scriptContent, "\\u003e", ">")
-	scriptContent = strings.ReplaceAll(scriptContent, "\\n", "\n")
-	scriptContent = strings.ReplaceAll(scriptContent, "\\\"", "\"")
+	scriptContent = cleanScriptContent(scriptContent)
 
 	// Extract title
 	if titleMatch := regexp.MustCompile(`"title":"([^"]+)"`).FindStringSubmatch(scriptContent); len(titleMatch) > 1 {

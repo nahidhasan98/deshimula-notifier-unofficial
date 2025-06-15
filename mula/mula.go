@@ -154,16 +154,27 @@ func (m *Mula) fetchAndParseStory(link string) (*base.Story, error) {
 	}
 
 	var description strings.Builder
-	doc.Find("main").Find("p, ol li").Each(func(i int, s *goquery.Selection) {
-		text := strings.TrimSpace(s.Text())
-		if text != "" {
-			if s.Is("li") {
-				description.WriteString("- ")
+	doc.Find("main .mt-4 .row .col-12").Each(func(i int, s *goquery.Selection) {
+		// Find the d-flex my-2 div first
+		div := s.Find(".d-flex.my-2")
+
+		// Get all following siblings that match your criteria
+		div.NextAll().Filter("p, ol li, h3, h4").Each(func(i int, s *goquery.Selection) {
+			text := strings.TrimSpace(s.Text())
+			if text != "" {
+				if s.Is("h3") {
+					description.WriteString("\n### " + text + " ###\n")
+				} else if s.Is("h4") {
+					description.WriteString("\n## " + text + " ##\n")
+				} else if s.Is("li") {
+					description.WriteString("- " + text + "\n")
+				} else {
+					description.WriteString(text + "\n")
+				}
 			}
-			description.WriteString(text + "\n")
-		}
+		})
 	})
-	story.Description = description.String()
+	story.Description = strings.TrimSpace(description.String())
 
 	return story, nil
 }

@@ -101,6 +101,14 @@ func (b *BaseService) FetchAndProcessStories(fetchLinks func() ([]string, error)
 
 // SendToDiscord sends a story to Discord
 func (b *BaseService) SendToDiscord(story *Story) error {
+	// Validate required fields
+	if story.Company == "" {
+		return errorhandling.NewError(errorhandling.ValidationError, "Cannot send story with empty company name", nil)
+	}
+	if story.Description == "" {
+		return errorhandling.NewError(errorhandling.ValidationError, "Cannot send story with empty description", nil)
+	}
+
 	b.discordMu.Lock()
 	defer b.discordMu.Unlock()
 
@@ -129,12 +137,24 @@ func (b *BaseService) SendToDiscord(story *Story) error {
 		if len(description) > maxContentLength {
 			lastNewline := strings.LastIndex(description[:maxContentLength], "\n")
 			if lastNewline == -1 {
-				lastNewline = maxContentLength
+				// If no newline found, cut at maxLength
+				chunk = description[:maxContentLength]
+				description = description[maxContentLength:]
+			} else {
+				// Cut at the last newline
+				chunk = description[:lastNewline]
+				description = description[lastNewline+1:] // Skip the newline character
 			}
-			chunk = description[:lastNewline]
-			description = description[lastNewline:]
 		} else {
+			// This is the last chunk
+			chunk = description
 			description = ""
+		}
+
+		// Skip empty chunks
+		chunk = strings.TrimSpace(chunk)
+		if chunk == "" {
+			continue
 		}
 
 		var title string
