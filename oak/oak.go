@@ -236,10 +236,3 @@ func (m *Oak) fetchAndParseStory(link string) (*base.Story, error) {
 
 	return story, nil
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
